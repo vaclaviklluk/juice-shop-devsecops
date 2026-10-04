@@ -101,28 +101,33 @@ leave business logic to manual testing.
 
 ## Results
 
-Latest run: [DevSecOps #2](https://github.com/vaclaviklluk/juice-shop-devsecops/actions/runs/37203119479)
-(commit `0ad0d11`, all six jobs green, 11 min 36 s). Findings per stage as imported into DefectDojo, copied from
+Latest run: [DevSecOps #4](https://github.com/vaclaviklluk/juice-shop-devsecops/actions/runs/37208617066)
+(commit `59d1be6`, all six jobs green, 20 min 10 s). Findings per stage as imported into DefectDojo, copied from
 the run summary:
 
 | Stage / tool | Critical | High | Medium | Low | Info | Total |
 |---|---:|---:|---:|---:|---:|---:|
 | SAST - Semgrep | 0 | 48 | 78 | 6 | 0 | 132 |
-| DAST - OWASP ZAP | 0 | 1 | 2 | 2 | 2 | 7 |
+| DAST - OWASP ZAP | 0 | 6 | 8 | 7 | 7 | 28 |
 | SBOM - Syft package inventory | 0 | 0 | 0 | 0 | 712 | 712 |
 | SBOM - Grype vulnerabilities | 12 | 71 | 62 | 13 | 7 | 165 |
 | SCA - OSV-Scanner | 9 | 46 | 32 | 5 | 0 | 92 |
 | Secrets - Gitleaks | 0 | 186 | 0 | 0 | 0 | 186 |
-| **All stages** | 21 | 352 | 174 | 26 | 721 | 1294 |
+| **All stages** | 21 | 357 | 180 | 31 | 726 | 1315 |
 
 DefectDojo merges duplicates while parsing, so some counts are lower than the raw reports: Semgrep reported 133
 results and Gitleaks 216 leaks in the 21,511 commits it scanned.
 
 What the stages found, in short:
 
-- **DAST:** a High SQL injection in the product search (`GET /rest/products/search?q=`), plus a missing
-  Content-Security-Policy, a permissive CORS policy, a private IP and Unix timestamps disclosed in responses.
-  ZAP's spiders found 101 URLs (classic) and 519 URLs (AJAX), and the active scan took 5 minutes.
+- **DAST:** six High findings: SQL injection in the login (`POST /rest/user/login`, `email`) and the product
+  search (`GET /rest/products/search?q=`), reflected XSS in the profile form and the profile-image URL, an open
+  redirect on `/redirect?to=` (reported twice, as External Redirect and Off-site Redirect), the full card number
+  echoed back by `POST /api/Cards` (PII disclosure), and a low-confidence path traversal on the address form
+  that needs triage. The Medium and Low findings cover the CSP,
+  missing anti-CSRF tokens, the JWT kept in `localStorage`, cookie flags, CORS and error disclosure. ZAP covered
+  692 distinct requests (`zap-urls.txt`), 13 of them `POST` or `PUT`, and the active scan took 13 minutes. The
+  previous, anonymous scan (run #2) reported 7 findings, one of them High.
 - **SAST:** NoSQL injection (19 findings), SQL injection through string-built queries and Sequelize (12),
   hard-coded passwords and JWTs, and 5 shell-injection risks in Juice Shop's own GitHub workflows.
 - **SCA and SBOM:** both find the Critical advisories in `crypto-js` 3.3.0, `jsonwebtoken` 0.1.0 and 0.4.0,
@@ -137,7 +142,7 @@ Each run's full results (all findings as JSON, the summary table and the screens
 
 ## Screenshots
 
-All screenshots come from run [#2](https://github.com/vaclaviklluk/juice-shop-devsecops/actions/runs/37203119479).
+All screenshots come from run [#4](https://github.com/vaclaviklluk/juice-shop-devsecops/actions/runs/37208617066).
 The DefectDojo pages were captured by the pipeline itself (`scripts/defectdojo-screenshots.sh`); the GitHub pages
 and the ZAP report were captured with the same headless browser from the public run page and the `report-dast`
 artifact.
@@ -156,7 +161,7 @@ artifact.
 | | |
 |---|---|
 | All open findings, most severe first | [![Open findings](docs/screenshots/defectdojo/03-open-findings.png)](docs/screenshots/defectdojo/03-open-findings.png) |
-| DAST: ZAP findings, and the SQL injection | [![ZAP test](docs/screenshots/defectdojo/11-test-dast-owasp-zap.png)](docs/screenshots/defectdojo/11-test-dast-owasp-zap.png) [![SQL injection](docs/screenshots/defectdojo/11-finding-dast-owasp-zap.png)](docs/screenshots/defectdojo/11-finding-dast-owasp-zap.png) |
+| DAST: ZAP findings, and the reflected XSS | [![ZAP test](docs/screenshots/defectdojo/11-test-dast-owasp-zap.png)](docs/screenshots/defectdojo/11-test-dast-owasp-zap.png) [![Reflected XSS](docs/screenshots/defectdojo/11-finding-dast-owasp-zap.png)](docs/screenshots/defectdojo/11-finding-dast-owasp-zap.png) |
 | SAST: Semgrep findings, and one in detail | [![Semgrep test](docs/screenshots/defectdojo/10-test-sast-semgrep.png)](docs/screenshots/defectdojo/10-test-sast-semgrep.png) [![Semgrep finding](docs/screenshots/defectdojo/10-finding-sast-semgrep.png)](docs/screenshots/defectdojo/10-finding-sast-semgrep.png) |
 | SCA: OSV-Scanner findings, and a Critical one | [![OSV test](docs/screenshots/defectdojo/14-test-sca-osv-scanner.png)](docs/screenshots/defectdojo/14-test-sca-osv-scanner.png) [![OSV finding](docs/screenshots/defectdojo/14-finding-sca-osv-scanner.png)](docs/screenshots/defectdojo/14-finding-sca-osv-scanner.png) |
 | SBOM: Grype vulnerabilities in the image, and a Critical one | [![Grype test](docs/screenshots/defectdojo/13-test-sbom-grype-vulnerabilities.png)](docs/screenshots/defectdojo/13-test-sbom-grype-vulnerabilities.png) [![Grype finding](docs/screenshots/defectdojo/13-finding-sbom-grype-vulnerabilities.png)](docs/screenshots/defectdojo/13-finding-sbom-grype-vulnerabilities.png) |
