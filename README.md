@@ -13,7 +13,7 @@ All tools are free and open source; the only platform used is GitHub Actions.
 | Secrets | [Gitleaks](https://github.com/gitleaks/gitleaks) 8.30.1 | The full git history of Juice Shop (21,511 commits scanned) | `gitleaks.json` | Gitleaks Scan |
 | SCA | [OSV-Scanner](https://github.com/google/osv-scanner) 2.6.0 | npm dependency trees of the backend and the Angular frontend | `osv-scanner.json` | OSV Scan |
 | SBOM | [Syft](https://github.com/anchore/syft) 1.54.0 + [Grype](https://github.com/anchore/grype) 0.120.0 | The released container image (OS packages and bundled npm modules) | `sbom.syft.json`, `sbom.cdx.json`, `grype.json` | Syft SBOM, Anchore Grype |
-| DAST | [OWASP ZAP](https://github.com/zaproxy/zaproxy) 2.17.0 | The running application: spider, AJAX spider, passive and active scan | `zap-report.xml`, `zap-report.html` | ZAP Scan |
+| DAST | [OWASP ZAP](https://github.com/zaproxy/zaproxy) 2.17.0 | The running application, logged in as a test user: recorded user journeys, spider, AJAX spider, passive and active scan | `zap-report.xml`, `zap-report.html` | ZAP Scan |
 
 The application under test is pinned: release `v20.2.0`, commit `5658473`, image
 `bkimminich/juice-shop:v20.2.0` by digest.
@@ -46,9 +46,17 @@ pull request to `main` and on demand (`workflow_dispatch`).
      databases. The job checks that the image's `org.opencontainers.image.revision` label names the commit the
      source stages scan, so all five stages cover the same release. SCA looks at what the source declares,
      the SBOM stage at what is actually shipped, including the Debian packages of the base image.
-   - *DAST* starts the Juice Shop container on a private Docker network and runs a ZAP
-     [automation plan](zap/automation.yaml): spider, AJAX spider (headless Firefox, needed for the Angular
-     single-page app), passive scan, then an active scan capped at 20 minutes.
+   - *DAST* starts the Juice Shop container on a private Docker network and registers a test user for the
+     run: an ordinary customer account with a random password. Playwright then walks that user through the
+     shop in headless Chromium ([`dast-journeys.mjs`](scripts/playwright/dast-journeys.mjs)) and records the
+     traffic: search, login, basket, checkout, product review, feedback with its captcha, a complaint with a
+     file upload, profile and photo uploads, and the account pages. A ZAP
+     [automation plan](zap/automation.yaml) imports those requests, logs in as the same user, runs the
+     spider and the AJAX spider (headless Firefox, needed for the Angular single-page app) as that user, and
+     then a passive scan and an active scan of everything found, capped at 30 minutes. The plan fails when
+     a login fails, at the start or during the scan, so a broken login cannot silently turn it into an
+     unauthenticated scan. Endpoints
+     that would change the test user's password or 2FA, or delete the account, are excluded.
 2. **The report job aggregates everything in DefectDojo.** It starts a throwaway DefectDojo 3.3.300 on the
    runner ([`defectdojo/docker-compose.yml`](defectdojo/docker-compose.yml)) and imports every report through
    the `/api/v2/import-scan/` API into one engagement, *GitHub Actions run &lt;id&gt;*, of the product
@@ -64,6 +72,32 @@ remaining reports in that case.
 The report job also has a security gate, off by default: set `FAIL_ON_SEVERITY` in the workflow to
 `Critical`, `High`, `Medium`, `Low` or `Info` and the job fails when any finding is at that severity or
 above. The gate's decision is written under the summary table either way.
+
+## DAST setup
+
+A scanner attacks only the requests it knows about, and most of Juice Shop is behind a login. The first version
+of this pipeline scanned anonymously with crawlers alone: it reached the public pages and reported 7 alert types.
+The scan now follows the usual practice for DAST in a pipeline:
+
+- **Authenticated, with a dedicated test user.** The user is created for each run, is an ordinary customer, and
+  has a random password. ZAP checks the session by polling an endpoint that needs a login and logs in again
+  when it is lost; the plan fails if any of these logins fails.
+- **Seeded with functional traffic.** Crawlers cannot fill in forms, solve a captcha or check out. The recorded
+  Playwright journeys hand ZAP those requests, with valid bodies to mutate. In a product team this is usually the
+  traffic of the existing end-to-end tests, or an OpenAPI definition for APIs. Juice Shop's own OpenAPI file
+  covers only its B2B order endpoint, so it is not used.
+- **Scoped and safe.** Only the application's origin is in scope, endpoints that would lock the test user out
+  are excluded, and the target is a throwaway container on a private network, not a shared environment.
+- **Tuned to the stack.** The context declares the technology, so ZAP skips rules for databases, languages and
+  servers that Juice Shop does not use. Thread, browser and time limits are explicit, so runs are comparable.
+- **Tracked with the other findings.** Results go to DefectDojo; the severity gate is off because the
+  application is vulnerable on purpose.
+
+A production pipeline would usually also run a short passive scan on every pull request and the full
+authenticated scan nightly or before a release against a staging environment (here the full scan runs on every
+push, which is affordable for a demonstration repository). It would triage false positives in DefectDojo or
+with ZAP alert filters and gate on new High findings, scan as several roles to catch access-control flaws, and
+leave business logic to manual testing.
 
 ## Results
 
@@ -134,8 +168,8 @@ artifact.
 
 - **Pinned supply chain.** Every action is pinned to a full commit SHA, and every tool and DefectDojo image to a
   digest. Juice Shop is checked out by commit, not by tag, and its image is pulled by digest. The Playwright
-  package used for screenshots is installed with `npm ci` from a committed lockfile (integrity hashes, no
-  install scripts). ZAP runs with `-silent`, so it uses only the add-ons in the pinned image instead of
+  package used for the DAST user journeys and the screenshots is installed with `npm ci` from a committed
+  lockfile (integrity hashes, no install scripts). ZAP runs with `-silent`, so it uses only the add-ons in the pinned image instead of
   downloading updates at start.
 - **Dependency updates.** Dependabot proposes updates for the action pins and for the DefectDojo images in the
   compose file, each after a 7-day cooldown, so a hijacked release has time to be noticed. DefectDojo image
@@ -152,6 +186,11 @@ artifact.
   without them. The password and the API token reach `curl` through
   stdin and a mode-600 header file, never through command-line arguments. DefectDojo listens on `127.0.0.1`
   only and disappears with the runner.
+- **DAST test user.** The account ZAP logs in with exists only in the Juice Shop container of that run. Its
+  random password reaches Playwright and ZAP through environment variables and is masked in the logs. The
+  recorded journeys and ZAP's sites tree contain the password, so they stay in temporary directories and are
+  not uploaded; the job publishes only the list of requests ZAP covered (`zap-urls.txt`). ZAP's report quotes
+  the user's session token as evidence of a finding; the token is valid only against that run's container.
 - **Redacted secrets report.** Gitleaks runs with `--redact`, so the secret values it finds are not copied
   into the artifacts or DefectDojo. Other reports can still quote source code or HTTP responses as evidence.
 - **No script injection.** `run:` steps do not interpolate event data, and job timeouts and concurrency
@@ -185,7 +224,7 @@ artifact.
 
 - **On GitHub:** fork the repository, enable Actions, then run *DevSecOps* from the Actions tab. When it finishes,
   download the `defectdojo-results` artifact (findings, summary, screenshots) or the per-stage `report-*` artifacts.
-- **Locally** (Docker with Compose v2, `jq`, `curl`): export the variables in the `env:` block of the workflow
+- **Locally** (Docker with Compose v2, `jq`, `curl`, `openssl`, `python3`): export the variables in the `env:` block of the workflow
   (Juice Shop version, commit and image, tool images), check out Juice Shop at the pinned commit into `juice-shop/`, then run the scripts in the same order as
   the jobs:
 
@@ -208,6 +247,7 @@ artifact.
 .github/workflows/devsecops.yml   pipeline definition
 .github/dependabot.yml            updates for the pinned actions and DefectDojo images
 scripts/                          one script per stage, plus DefectDojo start, import and screenshots
+scripts/playwright/               browser scripts: DAST user journeys, DefectDojo screenshots
 zap/automation.yaml               ZAP automation framework plan
 defectdojo/docker-compose.yml     throwaway DefectDojo used by the report job
 docs/screenshots/                 screenshots from a pipeline run
@@ -215,8 +255,14 @@ docs/screenshots/                 screenshots from a pipeline run
 
 ## Limitations
 
-- The DAST scan is unauthenticated: it covers the public pages and REST endpoints, not the features behind login.
-  The active scan is capped at 20 minutes to keep the pipeline under an hour.
+- DAST finds what an automated scanner can recognise in the requests it reaches: injection, XSS, path
+  traversal, misconfiguration, information disclosure. Most Juice Shop challenges are business-logic and
+  access-control flaws (another user's basket, negative quantities, forged coupons, admin pages) that need a
+  tester or dedicated test cases, and the DOM XSS in the search box is a known blind spot of ZAP. The scan
+  runs as one customer, so it does not compare what different users or roles can access.
+- The pinned ZAP image ships the release-quality scan rules only; ZAP runs with `-silent`, so beta and alpha
+  rules (for example NoSQL injection) are not downloaded. The active scan is capped at 30 minutes to keep
+  the pipeline under an hour.
 - DefectDojo exists only for the duration of a run, so it keeps no history across runs. Findings are kept in the
   run artifacts for 30 days. For a long-lived setup, point the import script at a hosted DefectDojo and use
   reimport to track findings over time.

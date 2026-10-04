@@ -1,6 +1,11 @@
-# ZAP Automation Framework plan: unauthenticated crawl and active scan of Juice Shop.
-# Juice Shop is an Angular single-page app, so the AJAX spider (headless Firefox)
-# does most of the discovery; the classic spider picks up linked static files.
+# ZAP Automation Framework plan: authenticated crawl and active scan of Juice Shop.
+# The scan covers three sources of requests:
+# - the recorded user journeys (journeys.har, from scripts/playwright/dast-journeys.mjs),
+#   which reach the logged-in API calls that crawlers cannot trigger (checkout, reviews,
+#   feedback with captcha, uploads);
+# - the classic spider, for linked static files;
+# - the AJAX spider (headless Firefox), needed for the Angular single-page app.
+# Everything runs as the test user that dast-zap.sh registers for the run.
 env:
   contexts:
     - name: juice-shop
@@ -10,6 +15,67 @@ env:
         - "http://juice-shop:3000.*"
       excludePaths:
         - "http://juice-shop:3000/socket.io.*"
+        # Account endpoints that would change the test user's password or 2FA, or delete
+        # it, and so end the authenticated scan.
+        - "http://juice-shop:3000/rest/user/change-password.*"
+        - "http://juice-shop:3000/rest/user/reset-password.*"
+        - "http://juice-shop:3000/rest/2fa/.*"
+        - "http://juice-shop:3000/dataerasure.*"
+      # Node.js/Express with SQLite and MongoDB-style storage on Linux: skip the rules
+      # written for other stacks, which leaves more of the time budget for the rest.
+      technology:
+        exclude:
+          - MySQL
+          - MariaDB
+          - PostgreSQL
+          - Microsoft SQL Server
+          - Oracle
+          - Microsoft Access
+          - Firebird
+          - SAP MaxDB
+          - Sybase
+          - IBM DB2
+          - HypersonicSQL
+          - CouchDB
+          - ASP
+          - C
+          - Java
+          - JSP/Servlet
+          - PHP
+          - Python
+          - Ruby
+          - MacOS
+          - Windows
+          - SVN
+          - Apache
+          - IIS
+          - Tomcat
+      # Browser-based login, as documented for Juice Shop by the ZAP project; the token
+      # from the login response is then sent as a bearer header and as the token cookie.
+      authentication:
+        method: browser
+        parameters:
+          loginPageUrl: http://juice-shop:3000/#/login
+          browserId: firefox-headless
+          loginPageWait: 5
+        verification:
+          method: poll
+          pollUrl: http://juice-shop:3000/api/Cards
+          pollPostData: ""
+          pollFrequency: 60
+          pollUnits: requests
+          loggedInRegex: '"status":"success"'
+          loggedOutRegex: '"status":"error"'
+      sessionManagement:
+        method: headers
+        parameters:
+          Authorization: "Bearer {%json:authentication.token%}"
+          cookie: "token={%json:authentication.token%}"
+      users:
+        - name: test-user
+          credentials:
+            username: ${DAST_USER_EMAIL}
+            password: ${DAST_USER_PASSWORD}
   parameters:
     failOnError: true
     failOnWarning: false
@@ -21,16 +87,51 @@ jobs:
       maxAlertsPerRule: 10
       scanOnlyInScope: true
 
+  - type: import
+    parameters:
+      type: har
+      fileName: /zap/wrk/journeys.har
+
+  # Logs in as the test user and fails the plan if that does not work, so a broken
+  # login cannot silently turn this back into an unauthenticated scan.
+  - type: requestor
+    parameters:
+      user: test-user
+    requests:
+      - url: http://juice-shop:3000/api/Cards
+        method: GET
+        responseCode: 200
+    tests:
+      - name: test user logged in
+        type: stats
+        statistic: stats.auth.success
+        site: http://juice-shop:3000
+        operator: ">="
+        value: 1
+        onFail: error
+      - name: no failed logins
+        type: stats
+        statistic: stats.auth.failure
+        site: http://juice-shop:3000
+        operator: "<="
+        value: 0
+        onFail: error
+
   - type: spider
     parameters:
       context: juice-shop
+      user: test-user
       maxDuration: 3
 
   - type: spiderAjax
     parameters:
       context: juice-shop
+      user: test-user
       maxDuration: 5
       browserId: firefox-headless
+      # Fixed instead of the default (one browser per CPU core), so runs are comparable.
+      numberOfBrowsers: 4
+      logoutAvoidance: true
 
   - type: passiveScan-wait
     parameters:
@@ -39,8 +140,35 @@ jobs:
   - type: activeScan
     parameters:
       context: juice-shop
-      maxRuleDurationInMins: 3
-      maxScanDurationInMins: 20
+      user: test-user
+      threadPerHost: 8
+      maxRuleDurationInMins: 5
+      maxScanDurationInMins: 30
+
+  # ZAP logs in again whenever it finds the session lost; fail the plan if any of
+  # those logins failed during the crawls and the active scan.
+  - type: requestor
+    parameters:
+      user: test-user
+    requests:
+      - url: http://juice-shop:3000/api/Cards
+        method: GET
+        responseCode: 200
+    tests:
+      - name: no failed logins during the scan
+        type: stats
+        statistic: stats.auth.failure
+        site: http://juice-shop:3000
+        operator: "<="
+        value: 0
+        onFail: error
+
+  - type: export
+    parameters:
+      context: juice-shop
+      type: yaml
+      source: sitestree
+      fileName: /zap/wrk/zap-sites.yaml
 
   - type: report
     parameters:

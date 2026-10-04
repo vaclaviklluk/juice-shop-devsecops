@@ -1,5 +1,5 @@
 {
-  "name": "devsecops-screenshots",
+  "name": "devsecops-playwright",
   "private": true,
   "type": "module",
   "dependencies": {

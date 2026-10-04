@@ -1,7 +1,7 @@
 # Version updates for the pinned dependencies. The cooldown lets a new release age a
 # week before it is proposed, so a hijacked release is likely caught first.
 # Tool images pinned in the workflow env are not covered (Dependabot does not read
-# them) and are bumped by hand. The Playwright lockfile in scripts/screenshots gets
+# them) and are bumped by hand. The Playwright lockfile in scripts/playwright gets
 # security updates only: its version must match PLAYWRIGHT_IMAGE.
 version: 2
 updates:

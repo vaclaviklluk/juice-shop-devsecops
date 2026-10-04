@@ -6,7 +6,7 @@
 # Output: <results-dir>/screenshots/*.png
 set -euo pipefail
 : "${PLAYWRIGHT_IMAGE:?}"
-here=$(dirname "$(realpath "$0")")/screenshots
+here=$(dirname "$(realpath "$0")")/playwright
 results=$(realpath "$1")
 # shellcheck source=/dev/null
 . "${DD_ENV_FILE:-${RUNNER_TEMP:-/tmp}/defectdojo.env}"
