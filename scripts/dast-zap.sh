@@ -40,10 +40,12 @@ echo "Juice Shop $version is up"
 # ZAP runs as uid 1000 inside its image; give it a scratch dir it can write.
 cp "$plan" "$work/automation.yaml"
 chmod 0777 "$work"
-# The plan exits 1 on errors and 2 when it completed with warnings (reports written).
+# -silent: no calls home, so ZAP runs only the add-ons in the pinned image instead of
+# downloading updates at start. The plan exits 1 on errors and 2 when it completed with
+# warnings (reports written).
 rc=0
 docker run --rm --network "$net" -v "$work:/zap/wrk" "$ZAP_IMAGE" \
-  zap.sh -cmd -autorun /zap/wrk/automation.yaml || rc=$?
+  zap.sh -cmd -silent -autorun /zap/wrk/automation.yaml || rc=$?
 if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
   echo "ZAP automation plan failed with exit code $rc" >&2
   exit "$rc"

@@ -1,5 +1,8 @@
-# Keeps the commit-SHA pins of the GitHub Actions current. The cooldown lets a new
-# release age a week before it is proposed, so a hijacked release is likely caught first.
+# Version updates for the pinned dependencies. The cooldown lets a new release age a
+# week before it is proposed, so a hijacked release is likely caught first.
+# Tool images pinned in the workflow env are not covered (Dependabot does not read
+# them) and are bumped by hand. The Playwright lockfile in scripts/screenshots gets
+# security updates only: its version must match PLAYWRIGHT_IMAGE.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -8,3 +11,14 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+
+  - package-ecosystem: docker-compose
+    directory: /defectdojo
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      # The DefectDojo django and nginx images must stay on the same release.
+      defectdojo:
+        patterns: ["*"]

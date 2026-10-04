@@ -3,7 +3,8 @@
 # findings and a per-stage severity summary.
 # Usage: defectdojo-import.sh <report-dir> <results-dir>
 # Output: <results-dir>/findings.json, summary.md, context.json (ids for screenshots)
-# Exits non-zero if any expected report is missing or rejected, after importing the rest.
+# Exits non-zero if any expected report is missing or rejected, after importing the rest,
+# or if the optional FAIL_ON_SEVERITY gate finds a finding at or above that severity.
 set -euo pipefail
 : "${JUICE_SHOP_VERSION:?}" "${JUICE_SHOP_COMMIT:?}"
 reports=$(realpath "$1")
@@ -12,6 +13,7 @@ mkdir -p "$results/imports"
 DD_URL=http://127.0.0.1:${DD_PORT:-8080}
 # shellcheck source=/dev/null
 . "${DD_ENV_FILE:-${RUNNER_TEMP:-/tmp}/defectdojo.env}"
+export DD_ADMIN_PASSWORD
 
 # report file | DefectDojo scan type | test title | stage tag
 imports=(
@@ -23,13 +25,17 @@ imports=(
   "gitleaks.json|Gitleaks Scan|Secrets - Gitleaks|secrets"
 )
 
-token=$(jq -n --arg p "$DD_ADMIN_PASSWORD" '{username: "admin", password: $p}' \
+# Password and API token reach curl through stdin and a mode-600 header file, never
+# through command-line arguments, which other processes on the host can read.
+token=$(jq -n '{username: "admin", password: $ENV.DD_ADMIN_PASSWORD}' \
   | curl -sS --fail-with-body "$DD_URL/api/v2/api-token-auth/" \
       -H 'Content-Type: application/json' -d @- | jq -r .token)
 if [ "${GITHUB_ACTIONS:-}" = true ]; then echo "::add-mask::$token"; fi
-auth="Authorization: Token $token"
+auth=$(mktemp)
+trap 'rm -f "$auth"' EXIT
+printf 'Authorization: Token %s\n' "$token" > "$auth"
 
-api_get() { curl -sS --fail-with-body -H "$auth" "$DD_URL/api/v2/$1"; }
+api_get() { curl -sS --fail-with-body -H "@$auth" "$DD_URL/api/v2/$1"; }
 
 engagement="GitHub Actions run ${GITHUB_RUN_ID:-local}"
 run_url="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-local}/actions/runs/${GITHUB_RUN_ID:-local}"
@@ -41,7 +47,7 @@ for entry in "${imports[@]}"; do
     failed=1
     continue
   fi
-  if curl -sS --fail-with-body -H "$auth" "$DD_URL/api/v2/import-scan/" \
+  if curl -sS --fail-with-body -H "@$auth" "$DD_URL/api/v2/import-scan/" \
       -F "file=@$reports/$file" -F "scan_type=$scan_type" -F "test_title=$title" -F "tags=$tag" \
       -F "product_type_name=Web Applications" -F "product_name=OWASP Juice Shop" \
       -F "engagement_name=$engagement" -F "auto_create_context=true" \
@@ -75,7 +81,7 @@ jq -n --arg run "$run_url" --arg version "$JUICE_SHOP_VERSION" --arg commit "$JU
     --arg build "${GITHUB_RUN_ID:-local}" \
   '{description: "OWASP Juice Shop \($version) scanned by \($run)",
     build_id: $build, commit_hash: $commit, branch_tag: $version}' \
-  | curl -sS --fail-with-body -X PATCH -H "$auth" -H 'Content-Type: application/json' \
+  | curl -sS --fail-with-body -X PATCH -H "@$auth" -H 'Content-Type: application/json' \
       "$DD_URL/api/v2/engagements/$engagement_id/" -d @- -o /dev/null
 
 # Export the engagement: tests, then all findings (paged), annotated with their test title.
@@ -83,7 +89,7 @@ api_get "tests/?engagement=$engagement_id&limit=100" | jq '.results | map({id, t
 next="$DD_URL/api/v2/findings/?test__engagement=$engagement_id&limit=500"
 echo '[]' > "$results/findings.json"
 while [ -n "$next" ] && [ "$next" != null ]; do
-  curl -sS --fail-with-body -H "$auth" "$next" -o "$results/page.json"
+  curl -sS --fail-with-body -H "@$auth" "$next" -o "$results/page.json"
   jq -s '.[0] + .[1].results' "$results/findings.json" "$results/page.json" > "$results/findings.tmp"
   mv "$results/findings.tmp" "$results/findings.json"
   next=$(jq -r .next "$results/page.json")
@@ -111,6 +117,25 @@ jq -r --argjson order "$order" --arg engagement "$engagement" '
     "|---|---:|---:|---:|---:|---:|---:|",
     ($order[] as $t | $all | map(select(.test_title == $t)) | row($t)),
     ($all | row("**All stages**"))' "$results/findings.json" > "$results/summary.md"
+
+# Optional gate: with FAIL_ON_SEVERITY set (Critical, High, Medium, Low or Info), the
+# job fails when any finding is at that severity or above. Unset, findings only report.
+if [ -n "${FAIL_ON_SEVERITY:-}" ]; then
+  blocking=$(jq --arg s "$FAIL_ON_SEVERITY" '
+    {Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4} as $rank
+    | if $rank[$s] == null then error("FAIL_ON_SEVERITY must be Critical, High, Medium, Low or Info") else . end
+    | map(select($rank[.severity] <= $rank[$s])) | length' "$results/findings.json")
+  if [ "$blocking" -gt 0 ]; then
+    printf '\nGate: **failed**, %s findings at %s or above (FAIL_ON_SEVERITY=%s).\n' \
+      "$blocking" "$FAIL_ON_SEVERITY" "$FAIL_ON_SEVERITY" >> "$results/summary.md"
+    echo "::error::$blocking findings at $FAIL_ON_SEVERITY or above"
+    failed=1
+  else
+    printf '\nGate: passed, no findings at %s or above.\n' "$FAIL_ON_SEVERITY" >> "$results/summary.md"
+  fi
+else
+  printf '\nGate: off, findings are reported only (FAIL_ON_SEVERITY is not set).\n' >> "$results/summary.md"
+fi
 cat "$results/summary.md"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat "$results/summary.md" >> "$GITHUB_STEP_SUMMARY"; fi
 

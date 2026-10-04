@@ -7,7 +7,7 @@
 #         <report-dir>/sbom.cdx.json   (CycloneDX SBOM, published as an artifact)
 #         <report-dir>/grype.json      (DefectDojo scan type "Anchore Grype")
 set -euo pipefail
-: "${JUICE_SHOP_IMAGE:?}" "${SYFT_IMAGE:?}" "${GRYPE_IMAGE:?}"
+: "${JUICE_SHOP_IMAGE:?}" "${JUICE_SHOP_COMMIT:?}" "${SYFT_IMAGE:?}" "${GRYPE_IMAGE:?}"
 out=$(realpath -m "$1")
 mkdir -p "$out"
 
@@ -22,6 +22,16 @@ mkdir "$scratch/syft" "$scratch/grype"
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$scratch/syft:/tmp" -v "$out:/out" "$SYFT_IMAGE" \
   scan "registry:$JUICE_SHOP_IMAGE" --platform linux/amd64 \
     -o syft-json=/out/sbom.syft.json -o cyclonedx-json=/out/sbom.cdx.json
+
+# The image's OCI revision label must name the commit that SAST, SCA and secrets scan,
+# so all stages describe the same release. (The label is set by whoever built the
+# image; it ties the two together but is not a signature.)
+rev=$(jq -r '.source.metadata.labels["org.opencontainers.image.revision"] // empty' "$out/sbom.syft.json")
+if [ "${#rev}" -lt 7 ] || [[ "$JUICE_SHOP_COMMIT" != "$rev"* ]]; then
+  echo "::error::Image revision label '$rev' does not match commit $JUICE_SHOP_COMMIT"
+  exit 1
+fi
+echo "Image revision $rev matches commit $JUICE_SHOP_COMMIT"
 
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$scratch/grype:/tmp" -v "$out:/out" "$GRYPE_IMAGE" \
   sbom:/out/sbom.syft.json -o json --file /out/grype.json

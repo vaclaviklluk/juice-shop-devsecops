@@ -2,7 +2,8 @@ name: DevSecOps
 
 # SAST, secrets, SCA, SBOM and DAST scans of OWASP Juice Shop, aggregated in DefectDojo.
 # Juice Shop is vulnerable on purpose, so findings never fail a scan job; a job turns
-# red only when its scanner breaks or a report cannot be imported.
+# red only when its scanner breaks or a report cannot be imported (or when the optional
+# FAIL_ON_SEVERITY gate of the report job is set).
 
 on:
   push:
@@ -170,6 +171,11 @@ jobs:
         run: scripts/defectdojo-up.sh
       - name: Import all reports into DefectDojo
         run: scripts/defectdojo-import.sh reports defectdojo-results
+        env:
+          # Security gate: Critical, High, Medium, Low or Info fails the job when any finding
+          # is at that severity or above. Empty reports only, since Juice Shop is vulnerable
+          # on purpose; set it for an application that is expected to be clean.
+          FAIL_ON_SEVERITY: ""
       - name: Screenshot DefectDojo
         if: ${{ !cancelled() && hashFiles('defectdojo-results/context.json') != '' }}
         run: scripts/defectdojo-screenshots.sh defectdojo-results
