@@ -1,0 +1,55 @@
+# ZAP Automation Framework plan: unauthenticated crawl and active scan of Juice Shop.
+# Juice Shop is an Angular single-page app, so the AJAX spider (headless Firefox)
+# does most of the discovery; the classic spider picks up linked static files.
+env:
+  contexts:
+    - name: juice-shop
+      urls:
+        - http://juice-shop:3000
+      includePaths:
+        - "http://juice-shop:3000.*"
+      excludePaths:
+        - "http://juice-shop:3000/socket.io.*"
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+
+jobs:
+  - type: passiveScan-config
+    parameters:
+      maxAlertsPerRule: 10
+      scanOnlyInScope: true
+
+  - type: spider
+    parameters:
+      context: juice-shop
+      maxDuration: 3
+
+  - type: spiderAjax
+    parameters:
+      context: juice-shop
+      maxDuration: 5
+      browserId: firefox-headless
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5
+
+  - type: activeScan
+    parameters:
+      context: juice-shop
+      maxRuleDurationInMins: 3
+      maxScanDurationInMins: 20
+
+  - type: report
+    parameters:
+      template: traditional-xml
+      reportDir: /zap/wrk
+      reportFile: zap-report.xml
+
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: /zap/wrk
+      reportFile: zap-report.html

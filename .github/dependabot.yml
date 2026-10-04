@@ -1,0 +1,10 @@
+# Keeps the commit-SHA pins of the GitHub Actions current. The cooldown lets a new
+# release age a week before it is proposed, so a hijacked release is likely caught first.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

@@ -1,0 +1,5 @@
+# Local pipeline runs
+reports/
+defectdojo-results/
+juice-shop/
+node_modules/

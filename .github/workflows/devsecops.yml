@@ -1,0 +1,190 @@
+name: DevSecOps
+
+# SAST, secrets, SCA, SBOM and DAST scans of OWASP Juice Shop, aggregated in DefectDojo.
+# Juice Shop is vulnerable on purpose, so findings never fail a scan job; a job turns
+# red only when its scanner breaks or a report cannot be imported.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Application under test: release tag, the commit it points to, and the released image.
+  JUICE_SHOP_VERSION: v20.2.0
+  JUICE_SHOP_COMMIT: 5658473cf8814459bf89000ce373b20ed0b4eb37
+  JUICE_SHOP_IMAGE: docker.io/bkimminich/juice-shop:v20.2.0@sha256:8739101ade29358abb5469ee66ae78e582c97ed0a5543a4ad102e5fa5193526b
+  # Tool images, pinned by digest. DefectDojo's own images are pinned in defectdojo/docker-compose.yml.
+  SEMGREP_IMAGE: docker.io/semgrep/semgrep:1.179.0@sha256:93963d9295a366f59e4850127b1550400ee7b388f04fe144e4a1f6325d96e01b
+  GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+  NODE_IMAGE: docker.io/library/node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
+  OSV_SCANNER_IMAGE: ghcr.io/google/osv-scanner:v2.6.0@sha256:afd838850ac1a0fcc15ff4a041dc9ba11123c3f0d2666217a5f0fcf9222b55fa
+  SYFT_IMAGE: docker.io/anchore/syft:v1.54.0@sha256:0356562f495d432056237fbea5cbc2d4839c9c75cd500784a66de2e7cc95ca7c
+  GRYPE_IMAGE: docker.io/anchore/grype:v0.120.0@sha256:5c88961f4130e830542d441c7ed6c78baa28e799163abac53d2be4923fb5ab7d
+  ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:2.17.0@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef
+  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+
+jobs:
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out Juice Shop ${{ env.JUICE_SHOP_VERSION }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: juice-shop/juice-shop
+          ref: ${{ env.JUICE_SHOP_COMMIT }}
+          path: juice-shop
+          persist-credentials: false
+      - name: Semgrep scan
+        run: scripts/sast-semgrep.sh juice-shop reports
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }} # keep partial reports, e.g. the SBOM when Grype fails
+        with:
+          name: report-sast
+          path: reports/
+          if-no-files-found: error
+          retention-days: 30
+
+  secrets:
+    name: Secrets (Gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out Juice Shop ${{ env.JUICE_SHOP_VERSION }} with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: juice-shop/juice-shop
+          ref: ${{ env.JUICE_SHOP_COMMIT }}
+          path: juice-shop
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Gitleaks scan of the full git history
+        run: scripts/secrets-gitleaks.sh juice-shop reports
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }} # keep partial reports, e.g. the SBOM when Grype fails
+        with:
+          name: report-secrets
+          path: reports/
+          if-no-files-found: error
+          retention-days: 30
+
+  sca:
+    name: SCA (OSV-Scanner)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out Juice Shop ${{ env.JUICE_SHOP_VERSION }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: juice-shop/juice-shop
+          ref: ${{ env.JUICE_SHOP_COMMIT }}
+          path: juice-shop
+          persist-credentials: false
+      - name: OSV-Scanner scan of backend and frontend dependencies
+        run: scripts/sca-osv.sh juice-shop reports
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }} # keep partial reports, e.g. the SBOM when Grype fails
+        with:
+          name: report-sca
+          path: reports/
+          if-no-files-found: error
+          retention-days: 30
+
+  sbom:
+    name: SBOM (Syft + Grype)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Syft SBOM and Grype scan of the Juice Shop image
+        run: scripts/sbom-syft-grype.sh reports
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }} # keep partial reports, e.g. the SBOM when Grype fails
+        with:
+          name: report-sbom
+          path: reports/
+          if-no-files-found: error
+          retention-days: 30
+
+  dast:
+    name: DAST (OWASP ZAP)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: ZAP scan of a running Juice Shop container
+        run: scripts/dast-zap.sh reports
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }} # keep partial reports, e.g. the SBOM when Grype fails
+        with:
+          name: report-dast
+          path: reports/
+          if-no-files-found: error
+          retention-days: 30
+
+  defectdojo:
+    name: Report (DefectDojo)
+    needs: [sast, secrets, sca, sbom, dast]
+    # Import whatever the scans produced even if one of them failed; the import step
+    # then fails on the missing report, so the gap stays visible.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: report-*
+          path: reports
+          merge-multiple: true
+      - name: Start DefectDojo
+        run: scripts/defectdojo-up.sh
+      - name: Import all reports into DefectDojo
+        run: scripts/defectdojo-import.sh reports defectdojo-results
+      - name: Screenshot DefectDojo
+        if: ${{ !cancelled() && hashFiles('defectdojo-results/context.json') != '' }}
+        run: scripts/defectdojo-screenshots.sh defectdojo-results
+      - name: DefectDojo container logs
+        if: ${{ failure() }}
+        run: |
+          for c in $(docker ps -aq --filter label=com.docker.compose.project=defectdojo); do
+            echo "::group::$(docker inspect -f '{{.Name}}' "$c")"
+            docker logs --tail 200 "$c" 2>&1
+            echo "::endgroup::"
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: defectdojo-results
+          path: defectdojo-results/
+          if-no-files-found: error
+          retention-days: 30

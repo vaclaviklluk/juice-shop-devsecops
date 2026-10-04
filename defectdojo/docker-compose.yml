@@ -1,0 +1,82 @@
+# Throwaway DefectDojo for a single pipeline run, trimmed from the upstream
+# DefectDojo 3.3.300 docker-compose.yml:
+#  - images pinned by digest;
+#  - no default secrets: scripts/defectdojo-up.sh generates them for each run;
+#  - the UI/API is published on 127.0.0.1 only;
+#  - no volumes, no celerybeat, no TLS port: the instance lives for one job.
+name: defectdojo
+
+x-django-env: &django-env
+  DD_DATABASE_URL: postgresql://defectdojo:${DD_DATABASE_PASSWORD:?}@postgres:5432/defectdojo
+  DD_CELERY_BROKER_URL: redis://valkey:6379/0
+  DD_CACHE_URL: redis://valkey:6379/1
+  DD_SECRET_KEY: ${DD_SECRET_KEY:?}
+  DD_CREDENTIAL_AES_256_KEY: ${DD_CREDENTIAL_AES_256_KEY:?}
+  DD_DATABASE_READINESS_TIMEOUT: "60"
+
+x-django-image: &django-image docker.io/defectdojo/defectdojo-django:3.3.300@sha256:6516f0f620867b76df766c5adb94a7538ef7c37560102c7b4d7ce4844993261c
+
+services:
+  nginx:
+    image: docker.io/defectdojo/defectdojo-nginx:3.3.300@sha256:2804d871ed730caae7c8c524dbb663eb4c500dec48ce92a2773cf880e3389e1d
+    depends_on:
+      uwsgi:
+        condition: service_started
+    environment:
+      DD_UWSGI_HOST: uwsgi
+      DD_UWSGI_PORT: "3031"
+    ports:
+      - "127.0.0.1:${DD_PORT:-8080}:8080"
+
+  uwsgi:
+    image: *django-image
+    depends_on:
+      initializer:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_started
+      valkey:
+        condition: service_started
+    entrypoint: ["/wait-for-it.sh", "postgres:5432", "-t", "30", "--", "/entrypoint-uwsgi.sh"]
+    environment:
+      <<: *django-env
+      DD_DEBUG: "False"
+      DD_ALLOWED_HOSTS: "localhost,127.0.0.1"
+
+  celeryworker:
+    image: *django-image
+    depends_on:
+      initializer:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_started
+      valkey:
+        condition: service_started
+    entrypoint: ["/wait-for-it.sh", "postgres:5432", "-t", "30", "--", "/entrypoint-celery-worker.sh"]
+    environment:
+      <<: *django-env
+
+  initializer:
+    image: *django-image
+    depends_on:
+      postgres:
+        condition: service_started
+    entrypoint: ["/wait-for-it.sh", "postgres:5432", "--", "/entrypoint-initializer.sh"]
+    environment:
+      <<: *django-env
+      DD_INITIALIZE: "true"
+      DD_ADMIN_USER: admin
+      DD_ADMIN_MAIL: admin@defectdojo.local
+      DD_ADMIN_FIRST_NAME: Admin
+      DD_ADMIN_LAST_NAME: User
+      DD_ADMIN_PASSWORD: ${DD_ADMIN_PASSWORD:?}
+
+  postgres:
+    image: docker.io/library/postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    environment:
+      POSTGRES_DB: defectdojo
+      POSTGRES_USER: defectdojo
+      POSTGRES_PASSWORD: ${DD_DATABASE_PASSWORD:?}
+
+  valkey:
+    image: docker.io/valkey/valkey:9.1.2-alpine@sha256:a174b894902bd3367e330d47cc2054367dc4917701776aaf336f41d83b65ec7a
