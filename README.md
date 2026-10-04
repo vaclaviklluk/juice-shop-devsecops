@@ -10,7 +10,7 @@ All tools are free and open source; the only platform used is GitHub Actions.
 | Stage | Tool | What it scans | Report | DefectDojo scan type |
 |---|---|---|---|---|
 | SAST | [Semgrep](https://github.com/semgrep/semgrep) 1.179.0 (OSS engine) | Juice Shop source code | `semgrep.json` | Semgrep JSON Report |
-| Secrets | [Gitleaks](https://github.com/gitleaks/gitleaks) 8.30.1 | The full git history of Juice Shop (21,511 commits) | `gitleaks.json` | Gitleaks Scan |
+| Secrets | [Gitleaks](https://github.com/gitleaks/gitleaks) 8.30.1 | The full git history of Juice Shop (21,511 commits scanned) | `gitleaks.json` | Gitleaks Scan |
 | SCA | [OSV-Scanner](https://github.com/google/osv-scanner) 2.6.0 | npm dependency trees of the backend and the Angular frontend | `osv-scanner.json` | OSV Scan |
 | SBOM | [Syft](https://github.com/anchore/syft) 1.54.0 + [Grype](https://github.com/anchore/grype) 0.120.0 | The released container image (OS packages and bundled npm modules) | `sbom.syft.json`, `sbom.cdx.json`, `grype.json` | Syft SBOM, Anchore Grype |
 | DAST | [OWASP ZAP](https://github.com/zaproxy/zaproxy) 2.17.0 | The running application: spider, AJAX spider, passive and active scan | `zap-report.xml`, `zap-report.html` | ZAP Scan |
@@ -82,7 +82,7 @@ the run summary:
 | **All stages** | 21 | 352 | 174 | 26 | 721 | 1294 |
 
 DefectDojo merges duplicates while parsing, so some counts are lower than the raw reports: Semgrep reported 133
-results and Gitleaks 216 leaks across 21,511 commits.
+results and Gitleaks 216 leaks in the 21,511 commits it scanned.
 
 What the stages found, in short:
 
