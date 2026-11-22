@@ -18,7 +18,7 @@ x-django-image: &django-image docker.io/defectdojo/defectdojo-django:3.3.300@sha
 
 services:
   nginx:
-    image: docker.io/defectdojo/defectdojo-nginx:3.3.300@sha256:2804d871ed730caae7c8c524dbb663eb4c500dec48ce92a2773cf880e3389e1d
+    image: docker.io/defectdojo/defectdojo-nginx:3.5.103@sha256:2afc43f88f09c842aebbc581c7839fcf83cd870bb90291e2724239e34d0f7ccc
     depends_on:
       uwsgi:
         condition: service_started
@@ -72,11 +72,11 @@ services:
       DD_ADMIN_PASSWORD: ${DD_ADMIN_PASSWORD:?}
 
   postgres:
-    image: docker.io/library/postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    image: docker.io/library/postgres:18.6-alpine@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
     environment:
       POSTGRES_DB: defectdojo
       POSTGRES_USER: defectdojo
       POSTGRES_PASSWORD: ${DD_DATABASE_PASSWORD:?}
 
   valkey:
-    image: docker.io/valkey/valkey:9.1.2-alpine@sha256:a174b894902bd3367e330d47cc2054367dc4917701776aaf336f41d83b65ec7a
+    image: docker.io/valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
